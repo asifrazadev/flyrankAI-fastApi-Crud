@@ -1,29 +1,44 @@
 """
 FlyRank Internship · Backend Track · Week 2 · Assignment A1
-Task API
+Task API — complete version with Swagger UI and extras.
 
-Stage 4: Full CRUD — PUT /tasks/{id} and DELETE /tasks/{id}.
-Run with: uvicorn main:app --reload
+Stages:
+  0  hello server
+  1  root + health
+  2  GET /tasks, GET /tasks/{id} with 404
+  3  POST /tasks with validation
+  4  PUT /tasks/{id}, DELETE /tasks/{id}
+  5  Swagger UI descriptions + extras (filter, search, /stats, /reset)
+
+Run with:  uvicorn main:app --reload
+Docs at:   http://localhost:8000/docs
 """
 
-from fastapi import FastAPI, HTTPException
+import copy
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from typing import Optional
 
 app = FastAPI(
     title="Task API",
     version="1.0",
-    description="A CRUD to-do list API built for the FlyRank Backend Internship — Week 2.",
+    description=(
+        "A CRUD to-do list API built for the **FlyRank Backend Internship — Week 2**.\n\n"
+        "Data lives in memory only — restarting the server resets the list. "
+        "That's intentional: it's the reason Week 3 introduces a real database."
+    ),
 )
 
 # ---------------------------------------------------------------------------
 # In-memory 'database'
 # ---------------------------------------------------------------------------
-tasks: list[dict] = [
+SEED_TASKS = [
     {"id": 1, "title": "Read the FastAPI docs",  "done": False},
     {"id": 2, "title": "Build the CRUD API",     "done": False},
     {"id": 3, "title": "Push to GitHub",         "done": False},
 ]
+
+tasks: list[dict] = copy.deepcopy(SEED_TASKS)
 next_id: int = 4
 
 
@@ -36,10 +51,11 @@ def _find_task(task_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Request models
+# Request / response models
 # ---------------------------------------------------------------------------
 
 class TaskCreate(BaseModel):
+    """Body for POST /tasks — title is required."""
     title: str
 
     @field_validator("title")
@@ -67,29 +83,71 @@ class TaskUpdate(BaseModel):
 # Meta
 # ---------------------------------------------------------------------------
 
-@app.get("/", tags=["Meta"], summary="API info")
+@app.get(
+    "/",
+    tags=["Meta"],
+    summary="API info",
+    description="Returns the API name, version, and a list of available endpoint paths.",
+)
 def root():
-    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
+    return {
+        "name": "Task API",
+        "version": "1.0",
+        "endpoints": ["/tasks", "/stats", "/health", "/reset"],
+    }
 
 
-@app.get("/health", tags=["Meta"], summary="Health check")
+@app.get(
+    "/health",
+    tags=["Meta"],
+    summary="Health check",
+    description=(
+        "Returns `{\"status\": \"ok\"}` when the server is running. "
+        "Real companies use this endpoint so load balancers can verify the service is alive."
+    ),
+)
 def health():
     return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# Read
+# Read — with extras: filter by done, search by title
 # ---------------------------------------------------------------------------
 
-@app.get("/tasks", tags=["Tasks"], summary="List all tasks")
-def list_tasks():
-    """Returns every task in the in-memory list."""
-    return tasks
+@app.get(
+    "/tasks",
+    tags=["Tasks"],
+    summary="List all tasks",
+    description=(
+        "Returns every task. Use `?done=true/false` to filter by status, "
+        "or `?search=keyword` to filter by title (case-insensitive)."
+    ),
+)
+def list_tasks(
+    done: Optional[bool] = Query(
+        default=None,
+        description="Filter by completion — `true` = finished, `false` = open.",
+    ),
+    search: Optional[str] = Query(
+        default=None,
+        description="Return only tasks whose title contains this string (case-insensitive).",
+    ),
+):
+    result = tasks
+    if done is not None:
+        result = [t for t in result if t["done"] == done]
+    if search:
+        result = [t for t in result if search.lower() in t["title"].lower()]
+    return result
 
 
-@app.get("/tasks/{task_id}", tags=["Tasks"], summary="Get a single task")
+@app.get(
+    "/tasks/{task_id}",
+    tags=["Tasks"],
+    summary="Get a single task",
+    description="Returns the task with the given ID, or **404** if it does not exist.",
+)
 def get_task(task_id: int):
-    """Returns one task by ID, or 404 if not found."""
     return _find_task(task_id)
 
 
@@ -97,12 +155,18 @@ def get_task(task_id: int):
 # Create
 # ---------------------------------------------------------------------------
 
-@app.post("/tasks", status_code=201, tags=["Tasks"], summary="Create a new task")
+@app.post(
+    "/tasks",
+    status_code=201,
+    tags=["Tasks"],
+    summary="Create a new task",
+    description=(
+        "Creates a task from `{\"title\": \"...\"}`. "
+        "Returns **201** with the new task. "
+        "Returns **400** if `title` is missing or empty — the server never trusts the client."
+    ),
+)
 def create_task(body: TaskCreate):
-    """
-    Creates a task — body: `{"title": "..."}`.
-    Returns **201** with the new task, or **400** if title is missing/empty.
-    """
     global next_id
     new_task = {"id": next_id, "title": body.title, "done": False}
     tasks.append(new_task)
@@ -111,18 +175,19 @@ def create_task(body: TaskCreate):
 
 
 # ---------------------------------------------------------------------------
-# Stage 4 — Update & Delete
+# Update & Delete
 # ---------------------------------------------------------------------------
 
-@app.put("/tasks/{task_id}", tags=["Tasks"], summary="Update a task")
+@app.put(
+    "/tasks/{task_id}",
+    tags=["Tasks"],
+    summary="Update a task",
+    description=(
+        "Updates `title` and/or `done`. At least one field required. "
+        "Returns **200** with the updated task, **400** for empty body, **404** for unknown ID."
+    ),
+)
 def update_task(task_id: int, body: TaskUpdate):
-    """
-    Updates `title` and/or `done` on the specified task.
-
-    - At least one field must be provided — otherwise **400**.
-    - Unknown ID → **404**.
-    - Returns the updated task on success (**200**).
-    """
     if body.title is None and body.done is None:
         raise HTTPException(
             status_code=400,
@@ -136,13 +201,47 @@ def update_task(task_id: int, body: TaskUpdate):
     return task
 
 
-@app.delete("/tasks/{task_id}", status_code=204, tags=["Tasks"], summary="Delete a task")
+@app.delete(
+    "/tasks/{task_id}",
+    status_code=204,
+    tags=["Tasks"],
+    summary="Delete a task",
+    description=(
+        "Removes the task. Returns **204 No Content** on success "
+        "(success, nothing to say). Returns **404** for unknown ID."
+    ),
+)
 def delete_task(task_id: int):
-    """
-    Removes the task with the given ID.
-
-    - Returns **204 No Content** on success (nothing to say — it's gone).
-    - Unknown ID → **404**.
-    """
     task = _find_task(task_id)
     tasks.remove(task)
+
+
+# ---------------------------------------------------------------------------
+# Extras
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/stats",
+    tags=["Extras"],
+    summary="Task statistics",
+    description="Returns a count of total, completed, and open tasks.",
+)
+def get_stats():
+    done_count = sum(1 for t in tasks if t["done"])
+    return {"total": len(tasks), "done": done_count, "open": len(tasks) - done_count}
+
+
+@app.post(
+    "/reset",
+    tags=["Extras"],
+    summary="Reset to seed data",
+    description=(
+        "Restores the original 3 example tasks and clears any added tasks. "
+        "Useful for demos and the mortality experiment."
+    ),
+)
+def reset_tasks():
+    global tasks, next_id
+    tasks = copy.deepcopy(SEED_TASKS)
+    next_id = 4
+    return {"message": "Tasks reset to seed data", "tasks": tasks}
