@@ -2,11 +2,12 @@
 FlyRank Internship · Backend Track · Week 2 · Assignment A1
 Task API
 
-Stage 2: In-memory task list + read endpoints (GET /tasks, GET /tasks/{id}).
+Stage 3: Create endpoint — POST /tasks with input validation.
 Run with: uvicorn main:app --reload
 """
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, field_validator
 
 app = FastAPI(
     title="Task API",
@@ -15,8 +16,7 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# In-memory 'database' — data lives here while the server is running.
-# Restarting the server resets the list (Week 3 fixes this with a real DB).
+# In-memory 'database'
 # ---------------------------------------------------------------------------
 tasks: list[dict] = [
     {"id": 1, "title": "Read the FastAPI docs",  "done": False},
@@ -35,23 +35,37 @@ def _find_task(task_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Stage 3 — Request model (Pydantic validates the body automatically)
+# ---------------------------------------------------------------------------
+
+class TaskCreate(BaseModel):
+    """Body for POST /tasks."""
+    title: str
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("title must not be empty")
+        return v.strip()
+
+
+# ---------------------------------------------------------------------------
 # Meta endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/", tags=["Meta"], summary="API info")
 def root():
-    """Returns the API name, version and available endpoints."""
     return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
 
 
 @app.get("/health", tags=["Meta"], summary="Health check")
 def health():
-    """Returns ok when the server is alive. Used by monitoring tools."""
     return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 — Read
+# Read
 # ---------------------------------------------------------------------------
 
 @app.get("/tasks", tags=["Tasks"], summary="List all tasks")
@@ -62,8 +76,30 @@ def list_tasks():
 
 @app.get("/tasks/{task_id}", tags=["Tasks"], summary="Get a single task")
 def get_task(task_id: int):
-    """
-    Returns the task with the given ID.
-    Returns **404** if no task has that ID — never return an empty 200.
-    """
+    """Returns one task by ID, or 404 if not found."""
     return _find_task(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 — Create
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/tasks",
+    status_code=201,
+    tags=["Tasks"],
+    summary="Create a new task",
+)
+def create_task(body: TaskCreate):
+    """
+    Creates a task from the JSON body `{"title": "..."}`.
+
+    - Returns **201 Created** with the new task.
+    - Returns **400 Bad Request** if `title` is missing or empty.
+    The server never trusts the client — title is always validated.
+    """
+    global next_id
+    new_task = {"id": next_id, "title": body.title, "done": False}
+    tasks.append(new_task)
+    next_id += 1
+    return new_task
